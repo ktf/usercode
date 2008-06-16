@@ -1,0 +1,347 @@
+Here are some notes on what I did to get everything working.
+
+Getting perfctr stats 
+=====================
+[recipe]
+
+I've started doing the system profiling for `CMSSW_2_0_7`. The actual description
+of the procedure was explained by [Lassi][] by email:
+
+> To run each of these, you need to first create the destination directory (e.g. 
+> Z-PERFCTR-FNAL-7).  
+> For multiple parallel runs the results appear under another subdirectory 
+> `$dir/{1,2,3,4}/p-*`.  
+> For single process the results appear directly under `$dir/p-*.txt`.  
+> The run time you get using `tail -1 $dir/out*.txt` (this assumes my TIMEFMT 
+> setting which is `export TIMEFMT='Timing information for %J: %E real, %U user, %S system (%P%)'`)
+
+> The perfctr configuration goes into `perf-<thingie>-def.txt`, including various 
+> types of stats at the beginning of the run.
+
+> The perfctr results go into `perf-<thingie>-out.txt`.
+
+> This really needs an improvement to get numastats output before _and_ after 
+> running the job, so you can calculate the delta cleanly.  
+> I just run only before, and subtract between jobs, but this loses the last 
+> job's numastats.
+
+What follows is the recipe to repeat what I've done.
+
+## Setting up the environment:
+
+The following should not change and it's the first thing being done when 
+logging in on the the perfctr enabled machine (I used the one in Estonia).
+
+    export VO_CMS_SW_DIR=/home/eulisse/performance_tests/sw
+    export SCRAM_ARCH=slc4_ia32_gcc345
+    source $VO_CMS_SW_DIR/cmsset_default.sh
+    export TIMEFMT='Timing information for %J: %E real, %U user, %S system (%P%)'
+    export WORKAREA=/home/eulisse/ptf
+    export CVSROOT=:pserver:anonymous@cmscvs.cern.ch:/cvs_server/repositories/CMSSW
+    cvs login
+    # Password is 98passwd
+
+Then I also set the following helper variables:
+
+    export ATTEMPT_NAME=test-1
+    #export ATTEMPT_NAME=test-cmssw-133
+    #export ATTEMPT_NAME=test-no-output-module
+    export USED_CMSSW=CMSSW_2_0_7
+    #export USED_CMSSW=CMSSW_1_3_3
+    #export USED_CMSSW=CMSSW_2_1_0_pre5
+    
+which is basically all I've to change if I want to repeat a measure with a 
+different CMSSW version.
+
+## Creating a CMSSW work area
+
+This actually applies to released versions of CMSSW, but nothing prevents 
+changing things and rebuild.
+    
+    export WORKDIR=$WORKAREA/$ATTEMPT_NAME-$USED_CMSSW
+    export dir=$WORKDIR/results
+    mkdir -p $WORKDIR $dir
+    cd $WORKDIR
+    scram project CMSSW $USED_CMSSW
+    cd $WORKDIR/$USED_CMSSW/src
+    eval `scram run -sh`
+    cvs co UserCode/Tuura/PerfAnalysis
+    # For old (CMSSW_1_3_3) releases only:
+    # cvs co -D 2007-04-1 Configuration/PyReleaseValidation
+    # scram b 
+
+## Creating the sample
+
+First of all one needs to create the appropriate DIGI files
+
+    cmsDriver.py B_JETS -s GEN -n 100
+    cmsDriver.py B_JETS -s SIM -n 100
+
+notice that you actually have to give the number of events you want (otherwise
+cmsDriver.py defaults to 1) and that I had to do the thing in two steps, because
+otherwise Lassi's recipe was not able to pick up the file from the local area.
+This can probably be fixed by playing a little bit with the --filein parameter 
+in the next steps.
+
+## Using a precreated sample
+
+If one wants to run over and over the performance stuff, once could actually
+save the data files produced above in:
+
+    $WORKAREA/data/$USED_CMSSW
+
+and link them in the area where we are running:
+
+    find $WORKAREA/data/$USED_CMSSW -name \*.root -exec ln -sf {} $WORKDIR/$USED_CMSSW/src \;
+
+## Actual profiling.
+
+Now, for what concerns the actual profiling, here is an adaption of Lassi's
+scripts which does not depend on ZSHisms...
+
+### B_JETS DIGI, single process only
+
+    (mkdir -p $dir
+      for sample in `seq 1 11`; 
+      do
+        (echo "Run started at `date +%s` (`date`)"
+        for f in 'B_JETS'; 
+        do
+          [ $(ls "$f"_*SIM.root 2>/dev/null | wc -l) = 1 ] || continue
+          basef=$f-DIGI-default-$sample
+          perfexout=$dir/perf-$basef
+          perfexopt="$(UserCode/Tuura/PerfAnalysis/perfctr-amd $sample ${perfexout}-def.txt)"
+          (set -x; (time cmsDriver.py "$f" -n 100 -s DIGI --prefix "perfex -o ${perfexout}-out.txt $perfexopt" ) 2>&1 > $dir/out-$basef.txt </dev/null)
+        done
+        echo "Run ended at `date +%s` (`date`)"
+    ) 2>&1 > $dir/all-digi-out-$sample.txt
+    done) 2>&1 > $dir/all-out.txt </dev/null &
+
+### B_JETS RECO, single process only:
+
+    (mkdir -p $dir/results;
+    for sample in `seq 1 11`; 
+    do
+      (echo "Run started at `date +%s` (`date`)"
+      for f in 'B_JETS'; 
+      do
+        [ $(ls "$f"_*DIGI.root 2>/dev/null | wc -l) = 1 ] || continue
+        basef=$f-RECO-default-$sample
+        perfexout=$dir/perf-$basef
+        perfexopt="$(UserCode/Tuura/PerfAnalysis/perfctr-amd $sample ${perfexout}-def.txt)"
+        (set -x; (time cmsDriver.py "$f" -n 100 -s RECO --prefix "perfex -o ${perfexout}-out.txt $perfexopt" ) 2>&1 > $dir/out-$basef.txt </dev/null)
+      done
+      echo "Run ended at `date +%s` (`date`)"
+      ) 2>&1 > $dir/all-reco-out-$sample.txt
+    done) 2>&1 > $dir/all-out.txt </dev/null &
+
+### B_JETS RECO, four processes in parallel (Analysis - Opteron 270 x 4.xls):
+
+    (mkdir -p $dir
+     for sample in `seq 8 11`; do
+       (echo "Run started at `date +%s` (`date`)";
+       for f in 'B_JETS'; 
+       do 
+         for proc in 1 2 3 4; 
+         do
+           [ $(ls "$f"_*DIGI.root 2>/dev/null | wc -l) = 1 ] || continue
+           basef=$f-RECO2-default-$sample
+           perfexout=$dir/$proc/perf-$basef
+           perfexopt="$(src/UserCode/Tuura/PerfAnalysis/perfctr-amd $sample ${perfexout}-def.txt)"
+           mkdir -p $dir/$proc
+           touch $dir/$proc/out-$basef.txt
+           (set -x; (time cmsDriver.py "$f" -n 100 -s RECO --dirout=$dir/$proc/ --prefix "perfex -o ${perfexout}-out.txt $perfexopt" ) 2>&1 > $dir/$proc/out-$basef.txt </dev/null) &
+         done
+         wait 
+       done
+       echo "Run ended at `date +%s` (`date`)") 2>&1 >> $dir/all-reco2-out-$sample.txt
+    done) 2>&1 >> $dir/all-out.txt </dev/null &
+
+### Running with a predefined cfg file.
+
+    (export MY_CFG=./B_JETS_50_120_RECO.py; 
+    mkdir -p $dir;
+    for sample in `seq 1 11`; 
+    do
+      (echo "Run started at `date +%s` (`date`)"
+      for f in 'B_JETS'; 
+      do
+        [ $(ls "$f"_*DIGI.root 2>/dev/null | wc -l) = 1 ] || continue
+        basef=$f-RECO-default-$sample
+        perfexout=$dir/perf-$basef
+        perfexopt="$(UserCode/Tuura/PerfAnalysis/perfctr-amd $sample ${perfexout}-def.txt)"
+        (set -x; (time perfex -o ${perfexout}-out.txt $perfexopt cmsRun -p $MY_CFG) 2>&1 > $dir/out-$basef.txt </dev/null)
+      done
+      echo "Run ended at `date +%s` (`date`)"
+      ) 2>&1 > $dir/all-reco-out-$sample.txt
+    done) 2>&1 > $dir/all-out.txt </dev/null &
+
+### Simply running `time cmsDriver.py` to get a numbers for runtime
+
+    (mkdir -p $dir/results;
+    for sample in `seq 1 10`; 
+    do
+      (echo "Run started at `date +%s` (`date`)"
+      for f in 'B_JETS'; 
+      do
+        [ $(ls "$f"_*DIGI.root 2>/dev/null | wc -l) = 1 ] || continue
+        basef=$f-RECO-default-$sample
+        (set -x; (time cmsDriver.py "$f" -n 100 -s RECO ) 2>&1 > $dir/timing-$basef.txt </dev/null)
+      done
+      echo "Run ended at `date +%s` (`date`)"
+      ) 2>&1 > $dir/timing-reco-out-$sample.txt
+    done) 2>&1 > $dir/all-out.txt </dev/null &
+ 
+to get the seconds for the various attempts:
+
+    cat $dir/timing-* | grep real | sed -e"s/m/*60+/g;s/[^0-9.*+]//g" | bc -l
+    
+## Filling up the Excel file.
+
+The analysis of the data is done with this state of the art tool called 
+Excel (sigh).
+In Lassi's `UserCode/Eulisse/PerfAnalysis` there are some reports from the 
+previous profiling rounds which I simply copied in my 
+`UserCode/Eulisse/PerfAnalysis` area and modified.
+The XLS file is divided in four pages,
+ 
+* A sets of summary plots.
+* The actual analysis numbers.
+* The counters data and process information
+* A description of the hardware (in my case AMD Opteron 275, which pretty much
+  resembles what Lassi used).
+  
+What really needs to be modified is page 3. The counters can be cut & pasted
+from the output of the following script:
+
+    f=B_JETS
+    t=RECO
+    ## Uncomment for DIGI
+    #t=DIGI
+    
+    for x in `seq 1 11`
+    do
+      basef=$f-$t-default-$x
+      echo Run $x
+      cat $dir/all-`echo $t | tr [A-Z] [a-z]`-out-$x.txt | grep -e '^Run' | cut -f4 -d\ | xargs echo | awk '{print $2 - $1}'
+      cat $dir/perf-$basef-out.txt
+    done
+
+and then [Lassi][]'s stuff should make all the analysis.
+
+## Results:
+
+Resulting xls files from running DIGI and RECO for B_JETS can be found in 
+`UserCode/Analysis/PerfAnalysis`.
+
+## Various Notes:
+
+### Note: Setting up the site-local-config.xml
+
+Notice that I had to set up the site-local-config.xml:
+
+    # export CMS_PATH=/opt/software/cms
+    cd $CMS_PATH
+    export CVSROOT=:pserver:anonymous@cmscvs.cern.ch:/cvs_server/repositories/CMSSW
+    cvs login
+    # passwd is "98passwd"
+    cvs -d $CVSROOT co SITECONF
+    ln -sf Estonia SITECONF/local
+
+### Note: cmsDriver.py
+
+cmsDriver.py syntax is:
+
+    cmsDriver.py <dataset> -s GEN,SIM[,<DIGI>[,<RECO>]]] -n <number of events>
+    cmsDriver.py <dataset> -s DIGI[,<RECO>]
+    cmsDriver.py <dataset> -s RECO
+
+### Note: had to install `sysstat`
+
+As root:
+
+    yum install sysstat
+
+Finally succeeded to install perfctr
+====================================
+
+[log]
+
+Following [Gilles][] instructions here:
+
+* [https://graymond.web.cern.ch/graymond/doc_solve/linux/compile_kernel_SLC4_for_PERFCTR][gilles1]
+
+I was actually able to build everything...
+
+So bottom line is that the estonia machine reachable from
+
+    /usr/bin/ssh root@io.hep.kbfi.ee -p 35000
+
+is up and running with perfctr enabled.
+
+## How I did it:
+
+Set up the environment:
+
+    export KERNEL_VERSION_MIN=2.6.9
+    export OLD_KERNEL_VERSION=2.6.9-67.0.4.EL.cern
+    export PERFCTR_VERSION=2.6.33
+    export WORKAREA=~/create-perfctr-rpm
+    export PATCH_VERSION=2.6.9-67.EL-redhat
+    export SPEC_VERSION=2.6.9-67.0.4.EL.cern
+    export EXTRAVERSION_VERSION=-67.0.4.ELsmp
+
+Create the workarea.
+
+    rm -rf $WORKAREA
+    mkdir -p $WORKAREA
+
+Fetch the appropriate SRPM, install it and have the patching done by rpmbuild 
+
+    cd $WORKAREA
+    wget -O$WORKAREA/perfctr-$PERFCTR_VERSION.tar.gz http://user.it.uu.se/~mikpe/linux/perfctr/2.6/perfctr-$PERFCTR_VERSION.tar.gz
+    tar xzf perfctr-$PERFCTR_VERSION.tar.gz
+    wget -O$WORKAREA/kernel-$OLD_KERNEL_VERSION.src.rpm http://linuxsoft.cern.ch/cern/slc4X/i386/updates/SRPMS/kernel-$OLD_KERNEL_VERSION.src.rpm
+    rpm -Uvh $WORKAREA/kernel-$OLD_KERNEL_VERSION.src.rpm
+    rpmbuild --target i686 -bp /usr/src/redhat/SPECS/kernel-$SPEC_VERSION.spec
+
+Install the patches:
+
+    cd /usr/src/redhat/BUILD/kernel-$KERNEL_VERSION_MIN/linux-$KERNEL_VERSION_MIN
+    cp .config .config.org
+    make mrproper
+    $WORKAREA/perfctr-$PERFCTR_VERSION/update-kernel -p $PATCH_VERSION
+    perl -p -i -e "s|^EXTRAVERSION.*|EXTRAVERSION = $EXTRAVERSION_VERSION|" Makefile
+    cp /boot/config-2.6.9$EXTRAVERSION_VERSION .config
+    make oldconfig
+    make dep ; make -j 15 modules ;make modules_install ; make -j 15 bzImage; make install
+
+Then I followed up the instruction in `$WORKAREA/perfctr-$PERFCTR_VERSION/INSTALL`
+to create the perfctr device:
+
+    cd $WORKAREA/perfctr-$PERFCTR_VERSION
+    cp etc/perfctr.rules /etc/udev/rules.d/99-perfctr.rules
+    cp etc/perfctr.rc /etc/rc.d/init.d/perfctr
+    chmod 755 /etc/rc.d/init.d/perfctr
+    /sbin/chkconfig --add perfctr
+
+and then I've built the userspace tools with:
+
+    cd $WORKAREA/perfctr-$PERFCTR_VERSION
+    make
+    make PREFIX=/usr install
+
+Then reboot and... bingo!
+
+    $ perfex -L
+    ....
+    K8_MEM_BYPASS_SAT:0xE4:0xF:0xF
+    K8_SIZED_COMMANDS:0xEB:0xF:0x7F
+    K8_PROBE_RESULT:0xEC:0xF:0xF
+    K8_HYPERTRANSPORT_BUS0_WIDTH:0xF6:0xF:0xF
+    K8_HYPERTRANSPORT_BUS1_WIDTH:0xF7:0xF:0xF
+    K8_HYPERTRANSPORT_BUS2_WIDTH:0xF8:0xF:0xF
+    K8C_LOCKED_OP:0x24:0xF:0x1
+    K8C_LOCK_ACCESSES:0x4C:0xF:0x3
+
+[gilles1]: https://graymond.web.cern.ch/graymond/doc_solve/linux/compile_kernel_SLC4_for_PERFCTR
