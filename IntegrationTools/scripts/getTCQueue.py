@@ -97,11 +97,10 @@ class CvsTagCollectorFetcher(threading.Thread):
         if exists(package):
           tagFile = join(package, "CVS/Tag")
           if not exists(tagFile) or open(tagFile).read().strip("NT").strip() != tag:
-            print open(tagFile).read().strip("N").strip()
-            assert(False)
+            print open(tagFile).read().strip("NT").strip()
             updatePackages.append(package)
             continue
-          print "Package %s already existing with correct tag" % package
+          print "Package %s already existing with correct tag and no local modifications." % package
         else:
           checkoutPackages.append(package)
       if checkoutPackages:    
@@ -117,7 +116,7 @@ class CvsTagCollectorFetcher(threading.Thread):
 
       self.__controller.notifyPackagesDone(packages)
       payload = self.__controller.getNextPayload()
-      
+
 if __name__ == "__main__":
   opts, args = parseOptions()
   if not len(args):
@@ -139,6 +138,7 @@ if __name__ == "__main__":
     tagCollections[t][1][p.split("/")[0]] = 1
     totalPkgs += 1
   controller = DownloadController(tagCollections, totalPkgs) 
+  
   for x in xrange(opts.workers):
     worker = CvsTagCollectorFetcher(controller)
     worker.start()
