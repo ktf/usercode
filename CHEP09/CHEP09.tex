@@ -129,10 +129,10 @@ When writing in C++ physicists have the tendency to think that the CPU will some
 Reality is however much different.
 
 
-While processor performances have evolved in exponentially, following the so called {\itshape Moore's law}~\cite{Moore:1998p325}, (dynamic) RAM memory has not kept up the pace with the result that its access has huge latency. The net result is that the faster processor the higher is the risk of  having it sitting idle waiting data or code coming from memory. This is commonly referred as the {\itshape Memory Wall}.
+While processor performances have evolved exponentially, following the so called {\itshape Moore's law}~\cite{Moore:1998p325}, (dynamic) RAM memory has not kept up the pace with the result that its access has huge latency. The net result is that faster the processor the higher is the risk of  having it sitting idle waiting for data or code coming from memory. This is commonly referred as the {\itshape Memory Wall}.
 
 
-Well aware of  this, all the CPU vendors try to mitigate the problem in various ways. First of all, modern CPUs have a hierarchy of  so called {\itshape cache memories} which are small quantities of on chip RAM implemented using the much faster (but much more expensive) {\itshape static} RAM cells which act as intermediary between the slow main memory and the CPU. Moreover, various  way of predicting (~\cite{Smith:1998}, ~\cite{Uht:1997}) the program flow and mitigating the cost of pipeline stalls due to branches are used. In particular most of  mainstream CPUs implement a branch prediction unit that use branch history to predict whether or not a given branch will be executed. Finally, the {\itshape Memory Management Unit} (MMU) of a CPU is equipped with so called {\itshape Translation Lookaside Buffers} (TLBs) which assist the conversion between the virtual address space where a program run and the physical address space. While all this devices alleviate the cost of  memory access and push the memory wall forward, technological limitations make so that those resources are actually small and in general limited.
+Well aware of  this, all the CPU vendors try to mitigate the problem in various ways. First of all, modern CPUs have a hierarchy of  so called {\itshape cache memories} which are small quantities of on chip RAM implemented using the much faster (but much more expensive) {\itshape static} RAM cells which act as intermediary between the slow main memory and the CPU. Moreover, various  way of predicting (~\cite{Smith:1998}, ~\cite{Uht:1997}) the program flow and mitigating the cost of pipeline stalls due to branches are used. In particular most of  mainstream CPUs implement a branch prediction unit that use branch history to predict whether or not a given branch will be executed. Finally, the {\itshape Memory Management Unit} (MMU) of a CPU is equipped with so called {\itshape Translation Lookaside Buffers} (TLBs) which assist the conversion between the virtual address space where a program runs and the physical address space. While all this devices alleviate the cost of  memory access and push the memory wall forward, technological limitations make so that those resources are actually small and in general limited.
 
 
 Just to give an example, a relatively new Core 2 Duo (tm) ~\cite{Core2Duo} processor from Intel has the specs show in \autoref{moderncpuspecs}:
@@ -190,7 +190,7 @@ we see a clear mismatch between what the hardware provides and the inherent dime
 \section{Understanding the reasons for the mismatch}
 \label{understandingthereasonsforthemismatch}
 
-One first naive question is whether or not such an amount of code is actually needed. By instrumenting our software using gcov and checking the source code coverage of a single, but representative, workflow, we found out that only one third of the lines of code are actually executed for this one third, only half of it is actually executed more than once. The main problem is that the executed and non-executed parts of the code are actually mixed in and it's therefore very hard for the memory management system to separate them so that the {\itshape cold} parts are polluting the execution of {\itshape hot} ones.
+One first naive question is whether or not such an amount of code is actually needed. By instrumenting our software using gcov (a test coverage program, part of the GNU Compiler Collection ~\cite{GCov}) and checking the source code coverage of a single, but representative, workflow, we found out that only one third of the lines of code are actually executed for this one third, only half of it is actually executed more than once. The main problem is that the executed and non-executed parts of the code are actually mixed in and it is therefore very hard for the memory management system to separate them so that the {\itshape cold} parts are polluting the execution of {\itshape hot} ones.
 This actually matches with our past work ~\cite{Tuura:2008p00019} where we identified high ITLB pressure as one of the problems for CMS software.
 The reasons for this large amount of code are actually multiple, but they can be summarized in four major areas:
 
@@ -220,16 +220,16 @@ Moreover a detailed split-up of the contents of our software (see fig. 1) shows 
 
 
 
-Strong of this understanding and its support data we have started an effort to try to reduce the size of our executable, knowing that this would have had for sure a concrete impact in things like memory usage (since code is actually a rather large fraction of our memory footprint), but also with the hope that this reduction in code-size would have brought an improvement in performance by alleviating pressure off the CPU caches and TLBs.
+Strong of this we have started an effort to try to reduce the size of our executable, knowing that this would have had for sure a concrete impact in things like memory usage (since code is actually a rather large fraction of our memory footprint), but also with the hope that this reduction in code-size would have brought an improvement in performance by alleviating pressure on the CPU caches and TLBs.
 
 
-One example was discovered while trying to understand why we had so much space devolved to symbol names. It turned out that the object persistency dictionary generator was mangling helper methods names with the file name of the source file where the actual method was defined, including the path relative to where the dictionary generator was getting launched. Changing directory to the actual location of the source file, before invoking genreflex and using a temporary, short, filename was enough to reduce by 9 MB the size use in the executable due to those symbols. This is a lampant example of how it's not only important write correct code, but that build procedures and packaging of the various software components has a non negligible impact on the produced code.
+One example was discovered while trying to understand why we had so much space devolved to symbol names. It turned out that the object persistency dictionary generator (\texttt{genreflex})was mangling helper methods names with the file name of the source file where the actual method was defined, including the path relative to where the dictionary generator was getting launched. Changing directory to the actual location of the source file, before invoking \texttt{genreflex} and using a temporary, short, filename was enough to reduce by 9 MB the size use in the executable due to those symbols. This is a clear example of how it is not only important write correct code, but that build procedures and packaging of the various software components has a non negligible impact on the produced code.
 
 
 \subsection{Study of symbols size}
 \label{studyofsymbolssize}
 
-The simplest thing that we can do when trying is to try to plot the size of symbols and their size in a scattered plot like the one shown in figure 2.
+The simplest thing that we can do when trying is to try to plot number of occurencies for a symbol of a given size in a scattered plot like the one shown in figure 2.
 
 
 \begin{figure}
@@ -279,7 +279,7 @@ The problem is that in order to have a low overhead on the profiled application 
 As it can be seen from the plot the aggregate cost of all the methods using less than 0.5\% of the total time sums up to 44\% of the total cost. Due do the small per symbol cost we need an high resolution tool for doing the profile and that's why perfmon2 becomes attractive for a proper analysis.
 
 
-In order to understand how to proceed for symbols found in the tail of the distribution we decided to join timing information with those coming from some other processor counter. This way we correlate cost with its possible cause and it's therefore easier to look at the source and take a specific action. If for example we plot the counts for \texttt{CLOCK\_CORE\_UNHALTED} and \texttt{ITLB\_MISS\_RETIRED} together, using the former to order symbols in both cases.
+In order to understand how to proceed for symbols found in the tail of the distribution we decided to join timing information with those coming from some other processor counter. In this way we correlate cost with its possible cause and it is therefore easier to look at the source and take a specific action. If for example we plot the counts for \texttt{CLOCK\_CORE\_UNHALTED} and \texttt{ITLB\_MISS\_RETIRED} together, using the former to order symbols in both cases.
 
 
 \begin{figure}
@@ -305,14 +305,14 @@ We immediately see that there is not a complete correlation between them and tha
 
 
 
-Here for example we see again that the inter-library entry point suffers a lot because of ITLB misses, as we would expect. However, as we said, this has to be (and is being) addressed with a global redisign of the way we package our software, which will take time and agreement between the various parties involved.
+Here for example we see again that the inter-library entry point suffers a lot because of ITLB misses, as we would expect. However, as we said, this has to be (and is being) addressed with a global redesign of the way we package our software, which will take time and agreement between the various parties involved.
 What has a more limited impact but is also more immediate to address and fix are the problems with symbols in the {\itshape grey area}. They still show up in the reports with relatively a measurable amount of time (between 0.3\% and 0.5\%) and most important show a significant footprint (few percents) due to some specific problem (ITLB misses in this case). Moreover, as we have previously said this code is most likely coming from the truly physics related part of the software and therefore under stricter control and most likely with limited scope.
 
 
 \subsection{Case study}
 \label{casestudy}
 
-One particular example we have found in our investigation indeed comes from an analysis on our software like the one suggested. The problem was insulated to be in the constructor of one of the classes representing a symmetric matrix. What was happening in this case was due to a static variable local to the constructor of the class being used to initialize a lookup table needed to speed up the serialization of objects of that class. An analysis of produced code revealed that the compiler we used (\texttt{gcc} 3.4.5) was unable to detect the code as a one time initialization and to move it out of the constructor itself. An otherwise trivial constructor was therefore carrying along the full code for a one time initialisation of a lookup table. We think this hidden cost was effectively creating problems in two ways:
+One particular example we have found in our investigation indeed comes from an analysis on our software like the one suggested. The problem was isolated to be in the constructor of one of the classes representing a symmetric matrix. What was happening in this case was due to a static variable local to the constructor of the class being used to initialize a lookup table needed to speed up the serialization of objects of that class. An analysis of produced code revealed that the compiler we used (\texttt{gcc} 3.4.5) was unable to detect the code as a one time initialization and to move it out of the constructor itself. An otherwise trivial constructor was therefore carrying along the full code for a one time initialization of a lookup table. We think this hidden cost was effectively creating problems in two ways:
 
 
 \begin{itemize}
@@ -336,7 +336,7 @@ Changing the constructor forcing the time initialisation code to be out-of-line 
 
 
 
-We were also encouraged by the fact that a more recent version of the compiler (\texttt{gcc} 4.3.2) did autonomously exactly the same thing. While 0.3\% of the execution time might be seen as a minor improvement one must think that one has to factor out the initial part of the distribution (which as we said is due to dynamic memory usage) and moreover it's important to note that due to the nature of the time distribution is not possible to expect anything much better from a single improvement.
+We were also encouraged by the fact that a more recent version of the compiler (\texttt{gcc} 4.3.2) did autonomously exactly the same thing. While 0.3\% of the execution time might be seen as a minor improvement one must think that one has to factor out the initial part of the distribution (which as we said is due to dynamic memory usage) and moreover it is important to note that due to the nature of the time distribution is not possible to expect anything much better from a single improvement.
 
 
 \section{Conclusions}
@@ -393,7 +393,10 @@ Eulisse, G., \& Tuura, L. (2004) IgProf profiling tool.
 
 \bibitem{Eulisse:2004}
 Eulisse, G., Muzaffar, S., Osborne, I., Taylor, L., \& Tuura, L. A. (2004). A coherent environment of software improvement tools for CMS. {\itshape Nuclear Inst. and Methods in Physics Research}, 534, 138-142.
-		
+
+\bibitem{GCov}
+http://gcc.gnu.org/onlinedocs/gcc/Gcov.html#Gcov
+
 \end{thebibliography}
 		
 %
