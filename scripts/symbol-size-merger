@@ -1,0 +1,48 @@
+#!/usr/bin/env python
+
+import re
+import sys
+
+classes = {}
+
+splitter = re.compile("([^0-9]*)([0-9]+)(.*)")
+
+def parseSymbol(previous, name):
+#  print "Previous", previous
+  match = splitter.match(name)
+  if not match:
+    return previous
+#  print match.groups()
+  prefix, count, rest = match.groups()
+  count = int(count)
+  if prefix:
+    previous.append(prefix)
+    return parseSymbol(previous, str(count)+rest)
+  previous.append(rest[:count])
+#  print rest[:count]
+  return parseSymbol (previous, rest[count:])
+
+print parseSymbol([],"_ZZN125_GLOBAL__N_tmp_slc4_ia32_gcc345_src_DataFormats_RecoCandidate_src_DataFormatsRecoCandidate_classes_rflx.cpp_DFF67DD7_B72D0B3014operator_34995EPvRKSt6vectorIS0_SaIS0_EES0_E3ret")
+
+if len(sys.argv) == 2:
+  print "Opening file", sys.argv[1]
+  f=file(sys.argv[1])
+else:
+  f=file("symbols.txt")
+
+
+for line in f.readlines():
+  splitted = line.split(" ")
+  if len(splitted) != 4:
+    continue
+  position, size, symbolType, symbolName = splitted 
+  symbolName = symbolName.strip()
+  associatedSymbol = ""
+  for s in [sym for sym in parseSymbol([], symbolName) if sym]:
+    associatedSymbol += "".join([str(len(s)), s])
+    if not classes.has_key(associatedSymbol):
+      classes[associatedSymbol] = 0
+    classes[associatedSymbol] += int(size)
+
+for klass, size in classes.iteritems():
+  print klass, size
