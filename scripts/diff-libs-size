@@ -1,12 +1,66 @@
 #!/usr/bin/env python
 # Diffs the library size between scram release and work areas.
 
-
 from glob import glob
 from os import getenv
 from os.path import join, getsize, basename
 from commands import getstatusoutput
 from sys import argv
+import re
+
+class LibInfo(object):
+  def __init__(self, lib = None):
+    self.totalSize = 0
+    self.sections = {}
+    if not lib:
+      return
+    self.totalSize = getsize(lib)
+    for k, v in self.sectionData(lib):
+      self.sections[k] = v
+  
+  def sectionData(self, libname):
+    """ yields a set of tuples with section name and size
+        for the passed libname.
+    """
+    error, output = getstatusoutput("objdump -x %s" % libname)
+    if error:
+      print "Error while running objdump:\n"
+      print output
+      exit(1)
+
+    for l in output.split("\n"):
+      match = re.match("[ ]+[0-9]+[ ]+([.][^ ]+)[ ]+([0-9a-f]+).*", l)
+      if match:
+        section, value = match.groups()
+        yield (section, int(value, 16))
+
+  def __iadd__(self, info):
+    """ Sums the information for libname to
+        this object.
+    """
+    self.totalSize += info.totalSize
+    for k, v in info.sections.iteritems():
+      if k not in self.sections:
+        self.sections[k] = 0
+      self.sections[k] += v
+    return self
+
+  def __isub__(self, info):
+    """ Subtracts the information for libname from 
+        this libinfo.
+    """
+    self.totalSize -= info.totalSize
+    for k, v in info.sections.iteritems():
+      if k not in self.sections:
+        self.sections[k] = 0
+      self.sections[k] -= v
+    return self
+
+  def __repr__(self):
+    res = "  Total size: %s\n" % self.totalSize
+    for k, v in self.sections.iteritems():
+      res += "  %s: %s\n" % (k, v)
+    return res
 
 if __name__ == "__main__":
   if len (argv) == 1:
@@ -26,16 +80,20 @@ if __name__ == "__main__":
   origLibDir = join(release, "lib", scramArch)
 
   origLibs = [ join(origLibDir, basename(l)) for l in workLibs ]
-  sizes = {}
+  infos = {}
+  totalInfo = LibInfo()
   for l in workLibs:
-    sizes[basename(l)] = int(getsize(l))
+    info = LibInfo(l)
+    infos[basename(l)] = info 
+    totalInfo += info 
   for l in origLibs:
-    sizes[basename(l)] -= int(getsize(l))
+    info = LibInfo(l)
+    infos[basename(l)] -= info 
+    totalInfo -= info
 
   total = 0
-  for k, v in sizes.iteritems():
-    if not v:
-      continue
-    total += int(v)
-    print "%s: %s" % (k, v)
-  print "Total (negative means work area is better):", total
+  for l, i in infos.iteritems():
+    print "%s: %s" % (l, i)
+
+  print "Global (negative means work area is better):\n"
+  print totalInfo
