@@ -3,7 +3,7 @@
 
 from glob import glob
 from os import getenv
-from os.path import join, getsize, basename
+from os.path import join, basename
 from commands import getstatusoutput
 from sys import argv
 import re
@@ -14,7 +14,6 @@ class LibInfo(object):
     self.sections = {}
     if not lib:
       return
-    self.totalSize = getsize(lib)
     for k, v in self.sectionData(lib):
       self.sections[k] = v
   
@@ -22,17 +21,18 @@ class LibInfo(object):
     """ yields a set of tuples with section name and size
         for the passed libname.
     """
-    error, output = getstatusoutput("objdump -x %s" % libname)
+    error, output = getstatusoutput("size -A %s" % libname)
     if error:
       print "Error while running objdump:\n"
       print output
       exit(1)
 
     for l in output.split("\n"):
-      match = re.match("[ ]+[0-9]+[ ]+([.][^ ]+)[ ]+([0-9a-f]+).*", l)
+      match = re.match("([.][^ ]+)[ ]+([0-9a-f]+).*", l)
       if match:
         section, value = match.groups()
-        yield (section, int(value, 16))
+        self.totalSize += int(value)
+        yield (section, int(value))
 
   def __iadd__(self, info):
     """ Sums the information for libname to
@@ -75,7 +75,7 @@ if __name__ == "__main__":
   if error:
     print "Error while retrieving CMSSW release area:"
     print output
-  release, work = output.split("\n") 
+  release, work = output.split("\n")
   workLibs = glob(join(work, "lib", scramArch, "*.so"))
   origLibDir = join(release, "lib", scramArch)
 
