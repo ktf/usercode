@@ -16,6 +16,7 @@ import sys
 import numpy
 from optparse import OptionParser
 from Image import fromarray
+from ImageDraw import ImageDraw
 import re
 
 def die(*statements):
@@ -95,4 +96,9 @@ if __name__ == "__main__":
   for x in range(255):
     lut.extend([255-x,x,x/2])
   pilImage.putpalette(lut)
+  d = ImageDraw(pilImage)
+  for c in xrange(256):
+    w, h = WIDTH*0.8 / 256, HEIGHT*0.01
+    x, y = c * w+WIDTH*0.1, HEIGHT*0.9 - h
+    d.rectangle((x, y, x+w, y+h), fill=c)
   pilImage.save(opts.output)
