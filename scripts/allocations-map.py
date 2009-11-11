@@ -79,11 +79,15 @@ if __name__ == "__main__":
     paddingAfter = (pos + size) - pageLowerBoundary(pos + size)
     addToPixel(data, pos + size, paddingAfter)
     
-    for x in xrange(((pos / PAGESIZE) + 1) * PAGESIZE,
-                    (((pos + size) / PAGESIZE) - 1) * PAGESIZE, 
-                    PAGESIZE):
-      addToPixel(data, x, PAGESIZE)
-  
+    firstFullPageAddr = ((pos / PAGESIZE) + 1) * PAGESIZE
+    lastFullPageAddr = (((pos + size) / PAGESIZE) - 1) * PAGESIZE
+    try: 
+      for x in xrange(firstFullPageAddr,
+                      lastFullPageAddr, 
+                      PAGESIZE):
+        addToPixel(data, x, PAGESIZE)
+    except OverflowError, e:
+      print firstFullPageAddr, lastFullPageAddr
   # Create the output grayscale picture. Rescale the values in the
   # data array so that they are normalised to 255 and convert the array
   # two 8 bit so that it can be easily used with the paletted mode.
