@@ -9,7 +9,8 @@
 # Dimensions of the output image
 WIDTH=1024
 HEIGHT=1024
-PAGESIZE=4096
+BITSPERPAGE=12
+PAGESIZE=1<<BITSPERPAGE
 
 import sys
 import numpy
@@ -18,7 +19,9 @@ from Image import fromarray, composite, blend
 from ImageDraw import ImageDraw
 import re
 from math import sqrt
+from cStringIO import StringIO
 
+# Simple helper function to print final messages and die gracefully.
 def die(*statements):
   for s in statements:
     print s
@@ -49,9 +52,10 @@ def paintAllocation(data, pos, size, fill=0):
   data[endpage] += (pos+size) & (PAGESIZE-1)
   data[startpage+1:endpage-1] = PAGESIZE
 
+# List to hold the top ten stacktraces as found at the end of the report.
 topTen = [[] for x in xrange(10)]
 
-# Yields (node, symbol, pos, size) from a string of comma separated values.
+# Returns (node, symbol, pos, size) from a string of comma separated values.
 # In the case the line starts with @ fill in the top 10 list.
 def allocationInfo(l):
   i = l.index(",")
@@ -59,6 +63,18 @@ def allocationInfo(l):
   k = j + 1 + l[j+1:].index(",")
   return (int(l[:i], 16), int(l[i+1:j], 16), int(l[j+1:k], 16), int(l[k+1:], 16))
 
+# Parse the final lines in the report which contains stacktraces for the top
+# 10 MEM_LIVE call-tree paths.
+# The actual format is:
+# 
+# @(<rank>,<level>)<node>:<symbol>
+#
+# where:
+# 
+# * <rank> is the rank of the call tree path (from 0 to 9)
+# * <level> is the depth of the entry in the calltree path.
+# * <node> is a unique id for the call tree node.
+# * <symbol> is the symbol name associated to such node.
 def parseStacktrace(l):
   parts = l.split(")", 1)
   rank, level = parts[0][2:].split(",")
@@ -66,16 +82,22 @@ def parseStacktrace(l):
   topTen[int(rank)].append((int(node, 16), symbol))
   return
 
+# Paints all allocations. Notice that allocations that fit in one page
+# and those that fit in more than one are handled differently.
 def paintData(data, allocations, nodeAllocations):
   for node, symbol, pos, size in allocations:
-    # Accumulate cost for each call-tree node.
-    nodeAllocations[node].append((pos, size))
     # Actually paint all the allocations on the map.
-    startpage, endpage = pos/PAGESIZE, ((pos+size)/PAGESIZE)
+    startpage, endpage = pos>>BITSPERPAGE, ((pos+size)>>BITSPERPAGE)
     if startpage == endpage:
       data[startpage] += size
     else:
       paintAllocation(data, pos, size)
+
+# Accumulates the different allocations coming from the same node.
+def accumulateData(allocations, nodeAllocations):
+  for node, symbol, pos, size in allocations:
+    # Accumulate cost for each call-tree node.
+    nodeAllocations[node].append((pos, size))
 
 def saveImage(data, nodeAllocations, opts):
   global WIDTH
@@ -104,20 +126,14 @@ def saveImage(data, nodeAllocations, opts):
   
   # Calculate an highlight mask to hightlight top MEM_LIVE allocations.
   highlightNode, highlighNodeName = topTen[4][0]
-  print highlighNodeName
-  highlightMask = numpy.zeros(WIDTH*HEIGHT, numpy.uint32)
   for (pos, size) in nodeAllocations[highlightNode]:
     paintAllocation(data, pos, size, 246)
-  highlightMask = highlightMask.compress(collapser)
   
   WIDTH = int(sqrt(len(data)))
   data = numpy.reshape(data, (len(data)/WIDTH, WIDTH))
-  highlightMask = numpy.reshape(highlightMask, (len(highlightMask)/WIDTH, WIDTH))
   HEIGHT, WIDTH = data.shape
   
   pilImage = fromarray(numpy.array(data, dtype=numpy.uint8), 'P')
-  highlightImage = fromarray(numpy.array(highlightMask, dtype=numpy.uint8), 'P')
-  maskImage = fromarray(numpy.array(highlightMask, dtype=numpy.uint8), '1')
   lut = [0,0,0]
   for x in (int(i / 245. * 255.) for i in range(245)):
     lut.extend([x*0.8, x*0.8 , x*0.8])
@@ -126,17 +142,14 @@ def saveImage(data, nodeAllocations, opts):
     lut.extend([186., 7., 17.])
   
   pilImage.putpalette(lut)
-#  highlightImage.putpalette(lut)
   
   d = ImageDraw(pilImage)
   for c in xrange(256):
     w, h = WIDTH*0.8 / 256, HEIGHT*0.01
     x, y = c * w+WIDTH*0.1, HEIGHT*0.9 - h
     d.rectangle((x, y, x+w, y+h), fill=c)
-#  pilImage = composite(pilImage, highlightImage, maskImage)
   pilImage = pilImage.resize((WIDTH*2, HEIGHT*2))
   pilImage.save(opts.output)
-
 
 def main():
   global WIDTH
@@ -165,17 +178,20 @@ def main():
   print "Reading file %s" % args[0]
   f = file(args[0], "r")
   allocations = []
-  lines = [l for l in f.readlines()]
+  datafile = f.read()
+  atIndex = datafile.index("@")
+  allocationsFile = StringIO(datafile[:atIndex])
+  stackTraceFile = StringIO(datafile[atIndex:])
   print "Done reading"
-  allocations = [allocationInfo(l) for l in lines if l[0] != "@"]
-  [parseStacktrace(l) for l in lines if l[0] == "@"]
-  
+  allocations = [allocationInfo(l) for l in allocationsFile.readlines()]
+  [parseStacktrace(l) for l in stackTraceFile.readlines()]
   # Map which keeps track of the total amount of memory allocated per node.
   nodeAllocations = dict((info[0], []) for info in allocations)
 
   print "Painting"
   paintData(data, allocations, nodeAllocations)
-
+  accumulateData(allocations, nodeAllocations)
+  
   print "Saving image"
   saveImage(data, nodeAllocations, opts)
 
