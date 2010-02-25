@@ -48,9 +48,12 @@ def paintAllocation(data, pos, size, fill=0):
   # If the allocation spans multiple pages, add the padding contribution
   # and then fill the pages in between (excluding those used for the
   # padding).
-  data[startpage] += PAGESIZE - (pos & (PAGESIZE-1))
-  data[endpage] += (pos+size) & (PAGESIZE-1)
-  data[startpage+1:endpage-1] = PAGESIZE
+  try:
+    data[startpage] += PAGESIZE - (pos & (PAGESIZE-1))
+    data[endpage] += (pos+size) & (PAGESIZE-1)
+    data[startpage+1:endpage-1] = PAGESIZE
+  except IndexError:
+    print startpage, endpage, "not an index"
 
 # List to hold the top ten stacktraces as found at the end of the report.
 topTen = [[] for x in xrange(10)]
@@ -125,9 +128,10 @@ def saveImage(data, nodeAllocations, opts):
   data /= PAGESIZE
   
   # Calculate an highlight mask to hightlight top MEM_LIVE allocations.
-  highlightNode, highlighNodeName = topTen[4][0]
-  for (pos, size) in nodeAllocations[highlightNode]:
-    paintAllocation(data, pos, size, 246)
+  if topTen[0]:
+    highlightNode, highlighNodeName = topTen[4][0]
+    for (pos, size) in nodeAllocations[highlightNode]:
+      paintAllocation(data, pos, size, 246)
   
   WIDTH = int(sqrt(len(data)))
   data = numpy.reshape(data, (len(data)/WIDTH, WIDTH))
@@ -179,12 +183,18 @@ def main():
   f = file(args[0], "r")
   allocations = []
   datafile = f.read()
-  atIndex = datafile.index("@")
-  allocationsFile = StringIO(datafile[:atIndex])
-  stackTraceFile = StringIO(datafile[atIndex:])
+  try:
+    atIndex = datafile.index("@")
+    allocationsFile = StringIO(datafile[:atIndex])
+    stackTraceFile = StringIO(datafile[atIndex:])
+  except:
+    allocationsFile = StringIO(datafile)
+    stackTraceFile = None
+
   print "Done reading"
   allocations = [allocationInfo(l) for l in allocationsFile.readlines()]
-  [parseStacktrace(l) for l in stackTraceFile.readlines()]
+  if stackTraceFile:
+    [parseStacktrace(l) for l in stackTraceFile.readlines()]
   # Map which keeps track of the total amount of memory allocated per node.
   nodeAllocations = dict((info[0], []) for info in allocations)
 
